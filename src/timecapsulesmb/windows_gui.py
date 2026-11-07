@@ -83,6 +83,10 @@ class Desktop:
         style.configure("TNotebook", borderwidth=0, tabmargins=(0, 1, 0, 0))
         style.configure("TNotebook.Tab", padding=(13, 7), background=PANEL)
         style.map("TNotebook.Tab", background=[("selected", BLUE)], foreground=[("selected", "#ffffff")])
+        style.map("TCombobox", fieldbackground=[("readonly", PANEL)], foreground=[("readonly", TEXT)],
+                  selectbackground=[("readonly", PANEL)], selectforeground=[("readonly", TEXT)])
+        self.root.option_add("*TCombobox*Listbox.background", PANEL)
+        self.root.option_add("*TCombobox*Listbox.foreground", TEXT)
         style.configure("Treeview", background=SIDEBAR, fieldbackground=SIDEBAR, rowheight=33, borderwidth=0)
         style.map("Treeview", background=[("selected", "#384449")], foreground=[("selected", "#ffffff")])
 
@@ -426,6 +430,7 @@ class AddDeviceDialog(simpledialog.Dialog):
 
     def body(self, master):
         self.configure(bg=BACKGROUND)
+        master.configure(bg=BACKGROUND)
         ttk.Label(master, text="Discovered device").grid(row=0, column=0, sticky="w", pady=5)
         self.device = ttk.Combobox(master, state="readonly", width=42, values=[
             "Enter an address manually", *(f"{item['name']}  ·  {item['host']}" for item in self.devices),

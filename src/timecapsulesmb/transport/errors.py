@@ -64,7 +64,9 @@ LOCAL_NETWORK_FILTERED_MESSAGE = local_network_filtered_message(platform="darwin
 
 
 # The signals a program raises on itself when it crashes.
-CRASH_SIGNALS = frozenset({signal.SIGSEGV, signal.SIGBUS, signal.SIGILL, signal.SIGABRT, signal.SIGFPE, signal.SIGTRAP})
+CRASH_SIGNALS = frozenset(
+    item for item in signal.Signals if item.name in {"SIGSEGV", "SIGBUS", "SIGILL", "SIGABRT", "SIGFPE", "SIGTRAP"}
+)
 
 
 class SshClientCrashedError(SshLocalNetworkFilteredError):

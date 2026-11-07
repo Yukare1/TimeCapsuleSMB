@@ -182,6 +182,9 @@ def default_user_data_dir() -> Path:
     system = platform.system()
     if system == "Darwin":
         return Path.home() / "Library" / "Application Support" / "TimeCapsuleSMB"
+    if system == "Windows":
+        local_app_data = os.getenv("LOCALAPPDATA")
+        return (Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local") / "TimeCapsuleSMB"
     xdg_data_home = os.getenv("XDG_DATA_HOME", "").strip()
     if xdg_data_home:
         return Path(xdg_data_home).expanduser().resolve() / "timecapsulesmb"

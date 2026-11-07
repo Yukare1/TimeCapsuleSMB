@@ -29,6 +29,8 @@ If TimeCapsuleSMB has been useful to you, you can [buy me a coffee](https://buym
 
 ## Requirements
 
+For the Windows desktop port, see [TimeCapsuleSMB for Windows](windows/README.md).
+
 You will need:  
 - A Mac or Linux computer on the same local network as the Time Capsule
   - The macOS app requires macOS 14 or later

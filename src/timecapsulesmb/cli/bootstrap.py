@@ -145,6 +145,8 @@ def current_platform_label() -> str:
         return "macOS"
     if sys.platform.startswith("linux"):
         return "Linux"
+    if sys.platform == "win32":
+        return "Windows"
     return sys.platform
 
 
@@ -248,7 +250,7 @@ def required_host_tools(platform_label: str) -> tuple[str, ...]:
     """ssh logs in to the device; every Mac has it in /usr/bin, minimal Linux
     installs may not. smbclient runs doctor's SMB checks, except on macOS,
     where doctor uses Apple's own SMB client (checks/smb_macos.py)."""
-    if platform_label == "macOS":
+    if platform_label in {"macOS", "Windows"}:
         return ("ssh",)
     return ("ssh", "smbclient")
 
@@ -259,7 +261,7 @@ def ensure_venv(python: str) -> Path:
         run([python, "-m", "venv", str(VENVDIR)])
     else:
         print(f"Using existing virtualenv at {VENVDIR}", flush=True)
-    return VENVDIR / "bin" / "python"
+    return VENVDIR / "Scripts" / "python.exe" if sys.platform == "win32" else VENVDIR / "bin" / "python"
 
 
 def venv_has_pip(venv_python: Path) -> bool:
@@ -396,6 +398,10 @@ def _require_supported_ssh(platform_label: str) -> None:
 
 
 def install_required_host_tools(platform_label: str) -> None:
+    if platform_label == "Windows":
+        _require_supported_ssh(platform_label)
+        print("Found Git for Windows OpenSSH.", flush=True)
+        return
     missing_tools = _missing_required_host_tools(platform_label)
     if "ssh" not in missing_tools:
         _require_supported_ssh(platform_label)
@@ -484,7 +490,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 selected_python=args.python,
                 selected_python_version=selected_python_version,
             )
-            if find_command("ssh") is not None:
+            if platform_label == "Windows" or find_command("ssh") is not None:
                 # No package manager has a newer ssh than the one installed,
                 # so a too-old one fails before bootstrap spends minutes on .venv.
                 command_context.set_stage("check_ssh")
@@ -533,7 +539,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             venv_exists_after=VENVDIR.exists(),
             venv_python_version=venv_version,
         )
-        if platform_label != "macOS":
+        if platform_label not in {"macOS", "Windows"}:
             # Doctor uses Apple's own SMB client on a Mac.
             command_context.update_fields(smbclient_available_after=find_command("smbclient") is not None)
         zeroconf_note = old_zeroconf_note(
@@ -542,6 +548,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         if zeroconf_note:
             print(f"\n{zeroconf_note}", flush=True)
         print("\nHost setup complete.", flush=True)
+        if platform_label == "Windows":
+            print(r"Open .venv\Scripts\timecapsulesmb.exe to launch the Windows desktop app.", flush=True)
+            command_context.succeed()
+            return 0
         print("Next steps:", flush=True)
         print(f"  1. {VENVDIR / 'bin' / 'tcapsule'} configure", flush=True)
         print(f"  2. {VENVDIR / 'bin' / 'tcapsule'} deploy", flush=True)

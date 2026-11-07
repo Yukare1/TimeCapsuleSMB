@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import sys
 import threading
 from collections.abc import Sequence
 
@@ -60,8 +61,8 @@ class BonjourQuery:
     """One operation's provider and cancellation lifetime, including follow-up resolves."""
 
     def __init__(self) -> None:
-        # Installation is the sole selection rule; a selected provider never falls back.
-        if command_exists("dns-sd"):
+        # Windows selectors only support sockets, so use zeroconf there.
+        if sys.platform != "win32" and command_exists("dns-sd"):
             from timecapsulesmb.discovery import native_dns_sd as provider
         else:
             from timecapsulesmb.discovery import zeroconf_backend as provider

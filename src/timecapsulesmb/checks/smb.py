@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import functools
 import ipaddress
 import os
@@ -11,6 +10,9 @@ import sys
 import tempfile
 import time
 import uuid
+
+if sys.platform != "win32":
+    import fcntl
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Union
@@ -28,7 +30,7 @@ class LocalSmbClient:
     """The SMB client doctor runs on this computer, the one place that says
     which program it is, where, and whether it works."""
 
-    kind: str  # "macos" (Apple's client) or "smbclient"
+    kind: str  # "macos", "windows", or "smbclient"
     label: str
     tool: str
     path: str | None  # absolute; None when the client is missing
@@ -58,8 +60,7 @@ class LocalSmbClient:
 
 
 def local_smb_client() -> LocalSmbClient:
-    """Apple's own client, the one Time Machine uses, on a Mac, and smbclient
-    everywhere else."""
+    """Select the host's SMB diagnostics client."""
     if sys.platform == "darwin":
         return LocalSmbClient(
             kind="macos",
@@ -68,6 +69,13 @@ def local_smb_client() -> LocalSmbClient:
             path=smb_macos.SMBUTIL if os.access(smb_macos.SMBUTIL, os.X_OK) else None,
             unreachable="No route to host",
             self_test=smb_macos.apple_smb_client_problem,
+        )
+    if sys.platform == "win32":
+        return LocalSmbClient(
+            kind="windows", label="Windows SMB client", tool="NetShareEnum",
+            path=os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "netapi32.dll"),
+            unreachable="NT_STATUS_HOST_UNREACHABLE",
+            self_test=lambda: None,
         )
     path = find_command("smbclient")
     return LocalSmbClient(
@@ -332,6 +340,11 @@ def check_authenticated_smb_listing(
     client = local_smb_client()
     if client.path is None:
         return CheckResult("FAIL", client.missing_message())
+    if client.kind == "windows":
+        from timecapsulesmb.checks.smb_windows import check_listing
+
+        targets = server if isinstance(server, list) else [server]
+        return check_listing(username, password, list(map(_normalize_smb_client_target, targets)), port, timeout)
     smbclient = client.path
     if client.kind == "macos":
         # Apple's client lists through the address doctor connects to.
@@ -414,6 +427,10 @@ def check_authenticated_smb_file_ops_detailed(
     client = local_smb_client()
     if client.path is None:
         return [CheckResult("WARN", f"SMB file-ops verification skipped: {client.missing_message()}")]
+    if client.kind == "windows":
+        from timecapsulesmb.checks.smb_windows import check_file_ops
+
+        return check_file_ops(username, password, ip_address or server, share_name, port)
     if client.kind == "macos":
         return _check_authenticated_smb_file_ops_macos(
             username, password, server, share_name, ip_address=ip_address, port=port, timeout=timeout,
@@ -591,7 +608,7 @@ def _read_uncached(path: Path) -> bytes:
     damaged fail the comparison instead of the decoding."""
     fd = os.open(path, os.O_RDONLY)
     try:
-        if hasattr(fcntl, "F_NOCACHE"):  # macOS only; tests run it elsewhere too
+        if sys.platform != "win32" and hasattr(fcntl, "F_NOCACHE"):  # macOS only; tests run it elsewhere too
             fcntl.fcntl(fd, fcntl.F_NOCACHE, 1)
         chunks = []
         while chunk := os.read(fd, 65536):

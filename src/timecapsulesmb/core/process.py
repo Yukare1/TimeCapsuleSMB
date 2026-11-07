@@ -25,6 +25,7 @@ import errno
 import os
 import shutil
 import subprocess
+import sys
 import threading
 from collections.abc import Mapping, Sequence
 
@@ -50,6 +51,8 @@ def popen_process(cmd: Sequence[str], **kwargs) -> subprocess.Popen:
     if unsupported:
         raise TypeError(f"unsupported spawn options: {', '.join(sorted(unsupported))}")
     argv = _spawn_argv(cmd, kwargs.get("env"))
+    if sys.platform == "win32":
+        return subprocess.Popen(argv, creationflags=subprocess.CREATE_NO_WINDOW, **kwargs)
     with SPAWN_LOCK:
         # Closed standard descriptors can be reused for a pipe or /dev/null,
         # silently sending Popen down its fork path. Do not modify the parent.

@@ -17,12 +17,19 @@ STOP_TIMEOUT_SECONDS = 2.0
 
 @contextmanager
 def keep_system_awake() -> Iterator[None]:
-    """Keep macOS from idle-sleeping while a long device operation runs.
+    """Prevent idle sleep on macOS and Windows during device operations."""
+    if sys.platform == "win32":
+        from ctypes import windll
 
-    A Mac that sleeps mid-deploy drops the SSH session and leaves the device
-    half-installed. Elsewhere this does nothing: Linux hosts such as a
-    Raspberry Pi do not idle-suspend, and none of this is required to work.
-    """
+        continuous = 0x80000000
+        system_required = 0x00000001
+        previous = windll.kernel32.SetThreadExecutionState(continuous | system_required)
+        try:
+            yield
+        finally:
+            if previous:
+                windll.kernel32.SetThreadExecutionState(previous | continuous)
+        return
     pid = _start_caffeinate() if sys.platform == "darwin" else None
     try:
         yield

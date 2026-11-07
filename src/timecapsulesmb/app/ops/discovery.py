@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ipaddress import IPv4Address
+
 from timecapsulesmb.app.context import AppOperationContext
 from timecapsulesmb.app.contracts import discover_payload
 from timecapsulesmb.core.error_codes import ErrorCode
@@ -33,10 +35,22 @@ def discover_operation(params: dict[str, object], context: AppOperationContext) 
     service = params.get("service")
     if service is not None and (not isinstance(service, str) or not any(t == service or t.startswith(service + ".") for t in SERVICE_TYPES)):
         raise AppOperationError("Unknown Bonjour service filter", code=ErrorCode.VALIDATION_FAILED)
+    interface = params.get("interface")
+    options = {}
+    if service is not None:
+        options["service"] = service
+    if interface is not None:
+        try:
+            if not isinstance(interface, str):
+                raise ValueError
+            address = str(IPv4Address(interface))
+        except ValueError as exc:
+            raise AppOperationError("Discovery interface must be a local IPv4 address.", code=ErrorCode.VALIDATION_FAILED) from exc
+        options.update(family="ipv4", interfaces=[address])
     refuse_if_local_network_denied(params, context)
     context.stage("bonjour_discovery")
     try:
-        snapshot, diagnostics = discover_snapshot_detailed(**({"service": service} if service is not None else {}), timeout=timeout)
+        snapshot, diagnostics = discover_snapshot_detailed(timeout=timeout, **options)
     except BonjourPermissionDenied as exc:
         raise AppOperationError(str(exc), code=ErrorCode.LOCAL_NETWORK_PERMISSION_DENIED) from exc
     payload = discover_payload(snapshot_payload(snapshot))

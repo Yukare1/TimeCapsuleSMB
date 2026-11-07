@@ -29,6 +29,7 @@ classifiers = [
   "Intended Audience :: End Users/Desktop",
   "Operating System :: MacOS",
   "Operating System :: POSIX :: Linux",
+  "Operating System :: Microsoft :: Windows",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.9",
@@ -83,6 +84,9 @@ dev = [
 
 [project.scripts]
 tcapsule = "timecapsulesmb.cli.main:main"
+
+[project.gui-scripts]
+timecapsulesmb = "timecapsulesmb.windows_gui:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

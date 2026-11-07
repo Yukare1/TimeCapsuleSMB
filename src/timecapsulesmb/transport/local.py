@@ -132,9 +132,13 @@ def scoped_tcp_connect_errors(hosts: Sequence[str], port: int, *, timeout: float
                     sockets.append(sock)
                     sock.setblocking(False)
                     code = sock.connect_ex((base, port, 0, index))
-                    if code in (0, errno.EISCONN):
+                    if code in (0, errno.EISCONN, getattr(errno, "WSAEISCONN", errno.EISCONN)):
                         results[host] = None
-                    elif code in (errno.EINPROGRESS, errno.EWOULDBLOCK, errno.EALREADY, errno.EINTR):
+                    elif code in (
+                        errno.EINPROGRESS, errno.EWOULDBLOCK, errno.EALREADY, errno.EINTR,
+                        getattr(errno, "WSAEWOULDBLOCK", errno.EWOULDBLOCK),
+                        getattr(errno, "WSAEINPROGRESS", errno.EINPROGRESS),
+                    ):
                         selector.register(sock, selectors.EVENT_WRITE, host)
                     else:
                         results[host] = os.strerror(code)

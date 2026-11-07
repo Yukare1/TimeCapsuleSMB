@@ -10,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import os
+import queue
 import re
 import selectors
 import sys
@@ -304,7 +305,7 @@ def _client_failure_detail(diagnostics: SshClientDiagnostics) -> str:
 
 @contextmanager
 def _ssh_client_log_path():
-    with tempfile.TemporaryDirectory(prefix=SSH_CLIENT_LOG_PREFIX, dir="/tmp") as directory:
+    with tempfile.TemporaryDirectory(prefix=SSH_CLIENT_LOG_PREFIX, dir=None if sys.platform == "win32" else "/tmp") as directory:
         yield Path(directory) / "client.log"
 
 
@@ -348,10 +349,14 @@ def _ssh_client_error_for_result(
 
 
 @lru_cache(maxsize=None)
+def _ssh_executable(password: str = "") -> str:
+    return require_local_ssh() if password or sys.platform == "win32" else "ssh"
+
+
 def _ssh_option_supported(option_name: str) -> bool:
     try:
         proc = run_process(
-            ["ssh", "-F", "/dev/null", "-G", "localhost", "-o", f"{option_name}=+ssh-rsa"],
+            [_ssh_executable(), "-F", "/dev/null", "-G", "localhost", "-o", f"{option_name}=+ssh-rsa"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
@@ -367,7 +372,7 @@ def _ssh_option_supported(option_name: str) -> bool:
 def _local_ssh_macs() -> tuple[str, ...]:
     try:
         proc = run_process(
-            ["ssh", "-Q", "mac"],
+            [_ssh_executable(), "-Q", "mac"],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -624,6 +629,9 @@ def ssh_master_alive(connection: SshConnection) -> bool:
     commands run over a master: every shared command does (ControlMaster=auto),
     and close_ssh_masters only runs before a reboot or at exit.
     """
+    if sys.platform == "win32":
+        # Each command has its own connection. There is no master to check.
+        return True
     try:
         proc = run_process(
             ["ssh", "-F", "/dev/null", "-o", f"ControlPath={_control_path(connection)}", "-O", "check", "tcsmb-master"],
@@ -653,6 +661,8 @@ def _connection_ssh_args(
     gives the remote command a terminal.
     """
     tokens = _normalize_ssh_tokens(connection.ssh_opts)
+    if sys.platform == "win32":
+        shared = False
 
     if not connection.password:
         auth_args = ["-o", "BatchMode=yes"]
@@ -687,7 +697,7 @@ def _connection_ssh_args(
         *extra_args,
         *tokens,
         *keepalive_args,
-        "-E", str(client_log),
+        "-E", client_log.as_posix(),
         *session_args,
         "-tt" if tty else "-T",
         "-a",
@@ -709,7 +719,7 @@ def _ssh_env(connection: SshConnection) -> dict[str, str] | None:
     extra = sha1_signature_env(os.environ)
     if connection.password:
         extra.update({
-            "SSH_ASKPASS": str(SSH_ASKPASS_PATH),
+            "SSH_ASKPASS": SSH_ASKPASS_PATH.as_posix(),
             "SSH_ASKPASS_REQUIRE": "force",
             SSH_PASSWORD_ENV: connection.password,
         })
@@ -737,6 +747,8 @@ def _stream_process(
     Returns all of the output, as run_process does; a final line without a
     newline is passed on at the end.
     """
+    if sys.platform == "win32":
+        return _stream_windows_process(cmd, env, timeout, on_line, join_stderr)
     deadline = None if timeout is None else time.monotonic() + timeout
     chunks: dict[int, list[bytes]] = {}
     pending = b""
@@ -779,6 +791,58 @@ def _stream_process(
     )
 
 
+def _stream_windows_process(cmd, env, timeout, on_line, join_stderr):
+    """Drain Windows pipes on reader threads and run callbacks on the caller."""
+    deadline = None if timeout is None else time.monotonic() + timeout
+    events = queue.Queue()
+    with popen_process(
+        cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT if join_stderr else subprocess.PIPE, env=env,
+    ) as process:
+        def read_stream(index, stream):
+            try:
+                for line in iter(stream.readline, b""):
+                    events.put((index, line))
+            finally:
+                events.put((index, None))
+
+        streams = [stream for stream in (process.stdout, process.stderr) if stream is not None]
+        readers = [
+            threading.Thread(target=read_stream, args=(index, stream), daemon=True)
+            for index, stream in enumerate(streams)
+        ]
+        output: list[list[bytes]] = [[] for stream in streams]
+        for reader in readers:
+            reader.start()
+        try:
+            active = len(readers)
+            while active:
+                remaining = None if deadline is None else max(deadline - time.monotonic(), 0)
+                if remaining == 0:
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                try:
+                    index, line = events.get(timeout=remaining)
+                except queue.Empty:
+                    raise subprocess.TimeoutExpired(cmd, timeout) from None
+                if line is None:
+                    active -= 1
+                    continue
+                output[index].append(line)
+                if index == 0:
+                    on_line(_output_line(line.removesuffix(b"\n")))
+            process.wait(None if deadline is None else max(deadline - time.monotonic(), 0))
+        except BaseException:
+            process.kill()
+            process.wait()
+            raise
+        finally:
+            for reader in readers:
+                reader.join()
+    return subprocess.CompletedProcess(
+        process.args, process.returncode, b"".join(output[0]), None if join_stderr else b"".join(output[1]),
+    )
+
+
 def _run_ssh(
     connection: SshConnection,
     remote_cmd: str,
@@ -812,7 +876,7 @@ def _run_ssh(
     stdin_kwargs: dict[str, object] = (
         {"stdin": subprocess.DEVNULL} if input_bytes is None else {"input": input_bytes}
     )
-    executable = require_local_ssh() if connection.password else "ssh"
+    executable = _ssh_executable(connection.password)
     join_stderr = merge_stderr and not tty
     attempt = 0
     while True:
@@ -952,7 +1016,7 @@ def ssh_local_forward(
         # A tunnel keeps its own connection: a forward opened through a
         # master belongs to the master and would outlive this tunnel.
         cmd = [
-            require_local_ssh() if connection.password else "ssh",
+            _ssh_executable(connection.password),
             *_connection_ssh_args(connection, client_log=client_log, stdin_null=True),
             "-N",
             "-L",

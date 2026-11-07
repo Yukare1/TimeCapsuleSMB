@@ -12,14 +12,16 @@ OPEN_FILE_LIMIT = 256
 
 def pytest_configure(config: pytest.Config) -> None:
     import os
-    import resource
 
     # Set this before urllib builds its default opener. Proxy tests can opt in.
     os.environ["no_proxy"] = os.environ["NO_PROXY"] = "*"
 
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    if soft == resource.RLIM_INFINITY or soft > OPEN_FILE_LIMIT:
-        resource.setrlimit(resource.RLIMIT_NOFILE, (OPEN_FILE_LIMIT, hard))
+    if os.name != "nt":
+        import resource
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft == resource.RLIM_INFINITY or soft > OPEN_FILE_LIMIT:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (OPEN_FILE_LIMIT, hard))
 
     # Native test objects for the whole run (tests/native/build.py). xdist
     # workers inherit the variable, so they share one directory, which goes

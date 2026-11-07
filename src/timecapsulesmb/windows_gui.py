@@ -23,12 +23,14 @@ from timecapsulesmb.core.release import CLI_VERSION
 from timecapsulesmb.identity import load_install_identity, set_telemetry_enabled
 
 
-BACKGROUND = "#202526"
-SIDEBAR = "#191d1e"
-PANEL = "#2c3234"
-TEXT = "#f1f4f4"
-MUTED = "#aab4b8"
-BLUE = "#116dea"
+BACKGROUND = "#202425"
+SIDEBAR = "#1a1d1e"
+PANEL = "#303435"
+LINE = "#353a3c"
+FOOTER = "#272b2c"
+TEXT = "#e9ebeb"
+MUTED = "#a6abad"
+BLUE = "#0874ef"
 
 
 def configure_tcl():
@@ -38,6 +40,19 @@ def configure_tcl():
             path = tcl / folder
             if path.is_dir():
                 os.environ.setdefault(variable, str(path))
+
+
+def _dark_caption(root):
+    if sys.platform == "win32":
+        from ctypes import byref, c_int, sizeof, windll
+        from ctypes.wintypes import HWND
+
+        # Tk's window ID is the child of the native window with the caption.
+        windll.user32.GetParent.restype = HWND
+        parent = windll.user32.GetParent(HWND(root.winfo_id()))
+        if parent:
+            enabled = c_int(1)
+            windll.dwmapi.DwmSetWindowAttribute(HWND(parent), 20, byref(enabled), sizeof(enabled))
 
 
 class Desktop:
@@ -52,18 +67,24 @@ class Desktop:
         self.discovered: list[dict] = []
         self.plan_device: str | None = None
         self.buttons: list[ttk.Widget] = []
+        self.device_rows: dict[str, ttk.Button] = {}
+        self.selected_device: str | None = None
         self.device_status = tk.StringVar(value="Select or add an AirPort device.")
         self.status = tk.StringVar(value="Ready")
+        self.operation_title = tk.StringVar(value="TimeCapsuleSMB")
+        self.operation_state = tk.StringVar(value="Idle")
         self.plan_status = tk.StringVar(value="Create a plan before installing or updating Samba.")
+        self.rsync = tk.BooleanVar()
         self.telemetry = tk.BooleanVar(value=load_install_identity(state / ".bootstrap").telemetry_enabled)
         root.title("TimeCapsuleSMB")
-        root.geometry("1040x690")
-        root.minsize(830, 570)
+        root.geometry("1080x746")
+        root.minsize(900, 570)
         root.configure(bg=BACKGROUND)
         root.protocol("WM_DELETE_WINDOW", self._close)
         self._style()
         self._layout()
         self._refresh_devices()
+        root.after_idle(lambda: _dark_caption(root))
         root.after(75, self._poll)
 
     def _style(self):
@@ -71,74 +92,144 @@ class Desktop:
         style.theme_use("clam")
         style.configure(".", background=BACKGROUND, foreground=TEXT, font=("Segoe UI", 10),
                         bordercolor=PANEL, fieldbackground=PANEL, lightcolor=PANEL, darkcolor=PANEL)
-        style.configure("Title.TLabel", font=("Segoe UI Semibold", 17))
+        style.configure("Title.TLabel", font=("Segoe UI Semibold", 11))
         style.configure("Section.TLabel", font=("Segoe UI Semibold", 13))
         style.configure("Muted.TLabel", foreground=MUTED)
         style.configure("Side.TFrame", background=SIDEBAR)
-        style.configure("Side.TLabel", background=SIDEBAR, foreground=MUTED, font=("Segoe UI Semibold", 10))
-        style.configure("TButton", padding=(12, 7), background=PANEL)
+        style.configure("Side.TLabel", background=SIDEBAR, foreground=MUTED, font=("Segoe UI Semibold", 9))
+        style.configure("Footer.TFrame", background=FOOTER)
+        style.configure("Footer.TLabel", background=FOOTER, foreground=MUTED, font=("Segoe UI", 9))
+        style.configure("FooterTitle.TLabel", background=FOOTER, foreground=TEXT, font=("Segoe UI Semibold", 9))
+        style.configure("Badge.TLabel", background=PANEL, foreground=TEXT, padding=(8, 3), font=("Segoe UI Semibold", 9))
+        style.configure("TButton", padding=(12, 5), background=PANEL)
         style.map("TButton", background=[("active", "#394246")], foreground=[("disabled", "#92999c")])
-        style.configure("Primary.TButton", background=BLUE, foreground="#ffffff")
-        style.map("Primary.TButton", background=[("disabled", PANEL), ("active", "#217eff")])
-        style.configure("TNotebook", borderwidth=0, tabmargins=(0, 1, 0, 0))
-        style.configure("TNotebook.Tab", padding=(13, 7), background=PANEL)
+        style.configure("Primary.TButton", background=BLUE, foreground="#ffffff", bordercolor=BLUE,
+                        lightcolor=BLUE, darkcolor=BLUE, font=("Segoe UI Semibold", 10))
+        style.map("Primary.TButton", background=[("disabled", PANEL), ("active", "#2182ff")])
+        style.configure("Nav.TButton", background=SIDEBAR, anchor="w", padding=(9, 6), borderwidth=0)
+        style.map("Nav.TButton", background=[("active", PANEL)])
+        style.configure("Device.TButton", background=SIDEBAR, anchor="w", padding=(8, 5), borderwidth=0)
+        style.map("Device.TButton", background=[("selected", "#383c3d"), ("active", PANEL)])
+        style.configure("Tool.TButton", background=PANEL, padding=(8, 4), borderwidth=0)
+        style.configure("Disclosure.TButton", background=BACKGROUND, anchor="w", padding=(0, 5), borderwidth=0)
+        style.configure("TNotebook", borderwidth=0, tabmargins=(0, 0, 0, 0),
+                        bordercolor=BACKGROUND, lightcolor=BACKGROUND, darkcolor=BACKGROUND)
+        style.configure("TNotebook.Tab", padding=(15, 4), background=PANEL, borderwidth=0,
+                        font=("Segoe UI Semibold", 10))
         style.map("TNotebook.Tab", background=[("selected", BLUE)], foreground=[("selected", "#ffffff")])
         style.map("TCombobox", fieldbackground=[("readonly", PANEL)], foreground=[("readonly", TEXT)],
                   selectbackground=[("readonly", PANEL)], selectforeground=[("readonly", TEXT)])
         self.root.option_add("*TCombobox*Listbox.background", PANEL)
         self.root.option_add("*TCombobox*Listbox.foreground", TEXT)
-        style.configure("Treeview", background=SIDEBAR, fieldbackground=SIDEBAR, rowheight=33, borderwidth=0)
-        style.map("Treeview", background=[("selected", "#384449")], foreground=[("selected", "#ffffff")])
+        self._surface_images: list[tk.PhotoImage] = []
 
-    def _button(self, parent, label, action, *, primary=False, side="left"):
-        button = ttk.Button(parent, text=label, command=action, style="Primary.TButton" if primary else "TButton")
-        button.pack(side=side, padx=(0, 7), pady=3)
+        segment = self._surface(PANEL)
+        segment_active = self._surface(BLUE, corner=PANEL)
+        style.element_create("Segment.surface", "image", segment, ("selected", segment_active),
+                             border=6, sticky="nswe")
+        tab_layout = style.layout("TNotebook.Tab")[0][1]
+        style.layout("TNotebook.Tab", [("Segment.surface", tab_layout)])
+
+    def _surface(self, color, *, corner=None):
+        """A small rounded surface stretched by ttk, preserving its corners."""
+        image = tk.PhotoImage(master=self.root, width=13, height=13)
+        if corner:
+            image.put(corner, to=(0, 0, 13, 13))
+        for y, inset in enumerate((4, 2, 1, 1, 0, 0, 0, 0, 0, 1, 1, 2, 4)):
+            image.put(color, to=(inset, y, 13 - inset, y + 1))
+        self._surface_images.append(image)
+        return image
+
+    def _button(self, parent, label, action, *, style="TButton", sidebar=False):
+        button = ttk.Button(parent, text=label, command=action, style=style)
+        if sidebar:
+            button.pack(fill="x", pady=1)
+        else:
+            button.pack(side="left", padx=(0, 7), pady=3)
         self.buttons.append(button)
         return button
 
     def _layout(self):
-        sidebar = ttk.Frame(self.root, width=278, padding=(18, 20), style="Side.TFrame")
+        sidebar = ttk.Frame(self.root, width=344, padding=(15, 16), style="Side.TFrame")
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
-        ttk.Label(sidebar, text="AIRPORT DEVICES", style="Side.TLabel").pack(anchor="w", pady=(0, 10))
-        row = ttk.Frame(sidebar, style="Side.TFrame")
-        row.pack(fill="x")
-        self._button(row, "Discover", self._discover)
-        self._button(row, "+ Add Device", self._add_device)
+        for title, action in (
+            ("▤   All Devices", lambda: self._show_tab(0)),
+            ("◷   Activity", self._show_activity),
+            ("⚙   Settings", lambda: self._show_tab(4)),
+        ):
+            ttk.Button(sidebar, text=title, style="Nav.TButton", command=action).pack(fill="x", pady=1)
+        ttk.Label(sidebar, text="Devices", style="Side.TLabel").pack(anchor="w", padx=8, pady=(14, 3))
+        self.device_canvas = tk.Canvas(sidebar, bg=SIDEBAR, highlightthickness=0, height=165)
+        self.device_canvas.pack(fill="x")
+        self.device_list = ttk.Frame(self.device_canvas, style="Side.TFrame")
+        rows = self.device_canvas.create_window(0, 0, window=self.device_list, anchor="nw")
+        self.device_canvas.bind("<Configure>", lambda event: self.device_canvas.itemconfigure(rows, width=event.width))
+        self.device_list.bind("<Configure>", lambda _event: self.device_canvas.configure(
+            scrollregion=self.device_canvas.bbox("all"),
+        ))
+        self.device_canvas.bind("<MouseWheel>", self._scroll_devices)
+        self._button(sidebar, "⊕   Add Device", self._add_device, style="Nav.TButton", sidebar=True)
+
+        tk.Frame(self.root, bg=LINE, width=1).pack(side="left", fill="y")
+        body = ttk.Frame(self.root)
+        body.pack(side="left", fill="both", expand=True)
+        header = ttk.Frame(body, padding=(19, 7, 8, 7))
+        header.pack(fill="x")
+        ttk.Label(header, text="TimeCapsuleSMB", style="Title.TLabel").pack(side="left")
+        tools = ttk.Frame(header)
+        tools.pack(side="right")
+        self._button(tools, "+ Add", self._add_device, style="Tool.TButton")
+        ttk.Button(tools, text="⚒ Maintenance", command=lambda: self._show_tab(3),
+                   style="Tool.TButton").pack(side="left", padx=(0, 7))
+        self._button(tools, "⊖ Forget", self._forget, style="Tool.TButton")
+        tk.Frame(body, bg=LINE, height=1).pack(fill="x")
+
+        footer = ttk.Frame(body, padding=(16, 7), style="Footer.TFrame")
+        footer.pack(side="bottom", fill="x")
+        ttk.Label(footer, text="◷", style="Footer.TLabel").pack(side="left", padx=(0, 8))
+        footer_text = ttk.Frame(footer, style="Footer.TFrame")
+        footer_text.pack(side="left", fill="x", expand=True)
+        ttk.Label(footer_text, textvariable=self.operation_title, style="FooterTitle.TLabel").pack(anchor="w")
+        ttk.Label(footer_text, textvariable=self.status, style="Footer.TLabel").pack(anchor="w")
+        ttk.Label(footer, textvariable=self.operation_state, style="Badge.TLabel").pack(side="right")
+        tk.Frame(body, bg=LINE, height=1).pack(side="bottom", fill="x")
+
+        self.workspace = ttk.Frame(body, padding=(16, 11, 16, 0))
+        self.workspace.pack(fill="both", expand=True)
+        self.tabs = ttk.Notebook(self.workspace)
+        self.tabs.enable_traversal()
+        self.tabs.pack(fill="both", expand=True)
+        overview = self._page("Overview", "Device overview", self.device_status)
+        self._button(overview, "Discover", self._discover, style="Primary.TButton")
+        self._button(overview, "Check connection", lambda: self._device_operation("reachability"))
+        self._button(overview, "Open in Explorer", self._explore)
         self.interface_addresses = [
             (f"{address.ip} · {adapter.nice_name}", address.ip)
             for adapter in get_adapters() for address in adapter.ips
             if address.is_IPv4 and not ipaddress.IPv4Address(address.ip).is_loopback
         ]
         self.interface = ttk.Combobox(
-            sidebar, state="readonly", values=["All network adapters", *(label for label, _ in self.interface_addresses)],
+            overview.master, state="readonly",
+            values=["All network adapters", *(label for label, _ in self.interface_addresses)], width=46,
         )
         self.interface.current(0)
-        self.interface.pack(fill="x", pady=(6, 0))
-        self.tree = ttk.Treeview(sidebar, show="tree", selectmode="browse")
-        self.tree.column("#0", width=232, stretch=True)
-        self.tree.pack(fill="both", expand=True, pady=(15, 10))
-        self.tree.bind("<<TreeviewSelect>>", self._selected)
-        self._button(sidebar, "Activity", lambda: self.activity.focus_set(), side="bottom")
-
-        body = ttk.Frame(self.root, padding=(22, 17))
-        body.pack(side="left", fill="both", expand=True)
-        ttk.Label(body, text="TimeCapsuleSMB", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(body, textvariable=self.device_status, style="Muted.TLabel").pack(anchor="w", pady=(3, 14))
-        tabs = ttk.Notebook(body)
-        tabs.pack(fill="both", expand=True)
-        overview = self._page(tabs, "Overview", "Device overview", "Check connectivity or open the share in File Explorer.")
-        self._button(overview, "Check connection", lambda: self._device_operation("reachability"))
-        self._button(overview, "Open in Explorer", self._explore)
-        install = self._page(tabs, "Install / Update", "Install / Update", self.plan_status)
-        self._button(install, "Create installation plan", self._plan, primary=True)
-        self.install_button = self._button(install, "Install / Update", self._install)
-        checkup = self._page(tabs, "Checkup", "Device checkup", "Check SSH, Bonjour, SMB login and share file operations.")
-        self._button(checkup, "Run checkup", lambda: self._device_operation("doctor"), primary=True)
-        maintenance = self._page(tabs, "Maintenance", "Maintenance", "Start Samba after a reboot or remove the managed installation.")
+        self.interface.pack(anchor="w", pady=(7, 0))
+        install = self._page("Install / Update", "Install / Update", self.plan_status, show_badge=True)
+        self.install_button = self._button(install, "↓  Install / Update", self._install_or_plan, style="Primary.TButton")
+        self.advanced_button = ttk.Button(install.master, text="›  Advanced Options", style="Disclosure.TButton",
+                                          command=self._toggle_advanced)
+        self.advanced_button.pack(anchor="w", pady=(5, 0))
+        self.advanced = ttk.Frame(install.master)
+        rsync = ttk.Checkbutton(self.advanced, text="Include rsync", variable=self.rsync, command=self._clear_plan)
+        rsync.pack(anchor="w", padx=14, pady=3)
+        self.buttons.append(rsync)
+        checkup = self._page("Checkup", "Checkup", "Check SSH, Bonjour, SMB login and share file operations.")
+        self._button(checkup, "Run checkup", lambda: self._device_operation("doctor"), style="Primary.TButton")
+        maintenance = self._page("Maintenance", "Maintenance", "Start Samba after a reboot or remove the managed installation.")
         self._button(maintenance, "Activate Samba", lambda: self._device_operation("activate"))
         self._button(maintenance, "Uninstall Samba", lambda: self._device_operation("uninstall"))
-        settings = self._page(tabs, "Settings", "Settings", f"TimeCapsuleSMB {CLI_VERSION} · Windows desktop")
+        settings = self._page("Settings", "Settings", f"TimeCapsuleSMB {CLI_VERSION} · Windows desktop")
         self._button(settings, "Validate installation", lambda: self._run("validate-install", {}))
         self._button(settings, "Forget device", self._forget)
         check = ttk.Checkbutton(settings.master, text="Send project diagnostics", variable=self.telemetry,
@@ -146,9 +237,10 @@ class Desktop:
         check.pack(anchor="w", pady=7)
         self.buttons.append(check)
 
-        ttk.Label(body, text="Activity", style="Section.TLabel").pack(anchor="w", pady=(12, 5))
-        log_panel = ttk.Frame(body)
-        log_panel.pack(fill="both", expand=True)
+        self.activity_page = ttk.Frame(self.workspace)
+        ttk.Label(self.activity_page, text="Activity", style="Section.TLabel").pack(anchor="w", pady=(5, 8))
+        log_panel = ttk.Frame(self.activity_page)
+        log_panel.pack(fill="both", expand=True, pady=(0, 12))
         self.activity = tk.Text(log_panel, height=11, wrap="word", bg=SIDEBAR, fg=TEXT,
                                 insertbackground=TEXT, relief="flat", padx=10, pady=7,
                                 font=("Consolas", 10), state="disabled")
@@ -156,18 +248,39 @@ class Desktop:
         self.activity.configure(yscrollcommand=scroll.set)
         self.activity.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
-        ttk.Label(body, textvariable=self.status, style="Muted.TLabel").pack(anchor="w", pady=(8, 0))
-
-    @staticmethod
-    def _page(tabs, title, heading, description):
-        page = ttk.Frame(tabs, padding=(15, 13))
-        tabs.add(page, text=title)
-        ttk.Label(page, text=heading, style="Section.TLabel").pack(anchor="w")
+    def _page(self, title, heading, description, *, show_badge=False):
+        page = ttk.Frame(self.tabs, padding=(0, 14))
+        self.tabs.add(page, text=title)
+        heading_row = ttk.Frame(page)
+        heading_row.pack(fill="x")
+        ttk.Label(heading_row, text=heading, style="Section.TLabel").pack(side="left")
+        if show_badge:
+            ttk.Label(heading_row, textvariable=self.operation_state, style="Badge.TLabel").pack(side="right")
         kwargs = {"text": description} if isinstance(description, str) else {"textvariable": description}
         ttk.Label(page, **kwargs, style="Muted.TLabel", wraplength=510).pack(anchor="w", pady=(4, 9))
         row = ttk.Frame(page)
         row.pack(fill="x")
         return row
+
+    def _show_tab(self, index):
+        self.activity_page.pack_forget()
+        self.tabs.pack(fill="both", expand=True)
+        self.tabs.select(index)
+
+    def _show_activity(self):
+        self.tabs.pack_forget()
+        self.activity_page.pack(fill="both", expand=True)
+
+    def _scroll_devices(self, event):
+        self.device_canvas.yview_scroll(-event.delta // 120, "units")
+
+    def _toggle_advanced(self):
+        if self.advanced.winfo_manager():
+            self.advanced.pack_forget()
+            self.advanced_button.configure(text="›  Advanced Options")
+        else:
+            self.advanced.pack(anchor="w")
+            self.advanced_button.configure(text="⌄  Advanced Options")
 
     def _load_profiles(self):
         try:
@@ -195,28 +308,51 @@ class Desktop:
         return str(self.state / f"{key}.env")
 
     def _refresh_devices(self, key=None):
-        for item in self.tree.get_children():
-            self.tree.delete(item)
+        for row in self.device_list.winfo_children():
+            row.destroy()
+        self.device_rows.clear()
         for device_id, device in self.devices.items():
-            self.tree.insert("", "end", iid=device_id, text=device["name"])
-        if self.devices:
-            self.tree.selection_set(key or next(iter(self.devices)))
+            row = ttk.Button(
+                self.device_list, text=f"▱  {device['name']}\n     {endpoint_host(device['host'])}",
+                style="Device.TButton", command=lambda value=device_id: self._select_device(value),
+            )
+            row.pack(fill="x", pady=(0, 2))
+            row.bind("<MouseWheel>", self._scroll_devices)
+            self.device_rows[device_id] = row
+        if not self.devices:
+            ttk.Label(self.device_list, text="No saved devices", style="Side.TLabel").pack(anchor="w", padx=8, pady=5)
+        self.selected_device = key or next(iter(self.devices), None)
+        self.device_list.update_idletasks()
+        self.device_canvas.configure(height=min(self.device_list.winfo_reqheight(), 290))
+        self.device_canvas.yview_moveto(0)
+        self._selected()
+
+    def _select_device(self, key):
+        self.selected_device = key
+        if not self.tabs.winfo_manager():
+            self._show_tab(0)
         self._selected()
 
     def _device_id(self):
-        selected = self.tree.selection()
-        return selected[0] if selected else None
+        return self.selected_device
 
-    def _selected(self, _event=None):
+    def _selected(self):
         key = self._device_id()
+        for device_id, row in self.device_rows.items():
+            row.state(["selected" if device_id == key else "!selected"])
         if key:
             device = self.devices[key]
             self.device_status.set(f"{device['name']}   •   {endpoint_host(device['host'])}")
         else:
             self.device_status.set("Select or add an AirPort device.")
-        self.plan_status.set("Plan ready. Review the details in Activity." if key and key == self.plan_device
-                             else "Create a plan before installing or updating Samba.")
-        self.install_button.state(["!disabled"] if key and key == self.plan_device and not self.busy else ["disabled"])
+        planned = key is not None and key == self.plan_device
+        self.plan_status.set("Plan ready. Open Activity to review the files and reboot requirement."
+                             if planned else "Create a plan before installing or updating Samba.")
+        self.install_button.configure(text="↓  Apply installation plan" if planned else "↓  Install / Update")
+
+    def _clear_plan(self):
+        self.plan_device = None
+        self._selected()
 
     def _log(self, message):
         self.activity.configure(state="normal")
@@ -228,7 +364,12 @@ class Desktop:
         if self.busy:
             return
         self.busy = True
-        self.status.set(f"{operation.replace('-', ' ').capitalize()} in progress…")
+        label = {
+            "deploy": "Install / Update", "doctor": "Checkup", "configure": "Add Device",
+        }.get(operation, operation.replace("-", " ").capitalize())
+        self.operation_title.set(label)
+        self.operation_state.set("Running")
+        self.status.set("Starting…")
         for button in self.buttons:
             button.state(["disabled"])
 
@@ -287,14 +428,17 @@ class Desktop:
         self._selected()
         if self.confirmation:
             item = self.confirmation
+            self.operation_state.set("Needs Approval")
             if messagebox.askokcancel(item["title"], item["message"], icon="warning", default="cancel", parent=self.root):
                 self._run(operation, {**params, "confirmation_id": item["confirmation_id"]}, done)
             else:
+                self.operation_state.set("Cancelled")
                 self.status.set("Cancelled before approval.")
                 self._log("Operation cancelled before approval.")
             return
         result = self.result or {}
         payload = result.get("payload") or {}
+        self.operation_state.set("Completed" if result.get("ok") else "Needs Attention")
         self.status.set("Completed" if result.get("ok") else "Needs attention · see Activity")
         if payload.get("summary"):
             self._log(payload["summary"])
@@ -302,6 +446,7 @@ class Desktop:
             try:
                 done(payload)
             except (OSError, ValueError) as exc:
+                self.operation_state.set("Needs Attention")
                 self.status.set("Needs attention · see Activity")
                 self._log(f"ERROR  {exc}")
 
@@ -336,6 +481,7 @@ class Desktop:
             self._save_profiles()
             self.passwords[key] = password
             self._refresh_devices(key)
+            self._show_tab(1)
 
         self._run("configure", params, configured)
 
@@ -358,8 +504,7 @@ class Desktop:
 
     def _plan(self):
         key = self._device_id()
-        self.plan_device = None
-        self._selected()
+        self._clear_plan()
 
         def ready(payload):
             self._log(f"Payload: {payload.get('payload_family') or 'Samba'}")
@@ -371,14 +516,15 @@ class Desktop:
             self.plan_device = key
             self._selected()
 
-        self._device_operation("deploy", key=key, options={"dry_run": True}, done=ready)
+        self._device_operation("deploy", key=key, options={"dry_run": True, "rsync_enabled": self.rsync.get()}, done=ready)
 
-    def _install(self):
+    def _install_or_plan(self):
         key = self._device_id()
         if key and key == self.plan_device:
-            self.plan_device = None
-            self._selected()
-            self._device_operation("deploy", key=key)
+            self._clear_plan()
+            self._device_operation("deploy", key=key, options={"rsync_enabled": self.rsync.get()})
+        else:
+            self._plan()
 
     def _explore(self):
         key = self._device_id()

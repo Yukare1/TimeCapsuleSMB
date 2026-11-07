@@ -1727,7 +1727,7 @@ class AppApiTests(unittest.TestCase):
         from timecapsulesmb.transport.errors import SshClientConfigError, ssh_signal_error
         import signal
 
-        for failure in (SshClientConfigError("Upgrade OpenSSH"), ssh_signal_error(signal.SIGKILL)):
+        for failure in (SshClientConfigError("Upgrade OpenSSH"), ssh_signal_error(signal.SIGTERM)):
             with self.subTest(failure=failure):
                 collector = CollectingSink()
 
@@ -2151,7 +2151,7 @@ class AppApiTests(unittest.TestCase):
         os.dup2(write_end, 1)
         os.close(write_end)
         os.close(read_end)
-        with self.assertRaises(BrokenPipeError):
+        with self.assertRaises(OSError if sys.platform == "win32" else BrokenPipeError):
             os.write(1, b"x")
         helper._discard_output()
         self.assertEqual(os.write(1, b"event\n"), 6)

@@ -12,6 +12,16 @@ from timecapsulesmb.checks.models import CheckResult, DOMAIN_COMPUTER
 from timecapsulesmb.checks.smb import _new_listing_attempt, _smbclient_attempts_failure_summary, _smb_file_steps_on_mount
 
 
+_WIN_SMB_ERRORS = {
+    5: "NT_STATUS_ACCESS_DENIED",
+    51: "NT_STATUS_NETWORK_UNREACHABLE",
+    53: "NT_STATUS_NETWORK_UNREACHABLE",
+    64: "NT_STATUS_CONNECTION_DISCONNECTED",
+    121: "NT_STATUS_IO_TIMEOUT",
+    1326: "NT_STATUS_LOGON_FAILURE",
+}
+
+
 def unc_root(host: str) -> str:
     try:
         ipv6 = ipaddress.IPv6Address(host)
@@ -87,7 +97,9 @@ def check_listing(username, password, targets, port, timeout):
                 shares = _disk_shares(unc_root(target.ip_address or target.server))
         except OSError as exc:
             attempt = _new_listing_attempt(target, timeout, start)
-            attempt.update(outcome="error", failure=str(exc), errno=getattr(exc, "winerror", None))
+            code = getattr(exc, "winerror", None)
+            label = _WIN_SMB_ERRORS.get(code)
+            attempt.update(outcome="error", failure=f"{label}: {exc}" if label else str(exc), errno=code)
             attempts.append(attempt)
             continue
         attempt = _new_listing_attempt(target, timeout, start)

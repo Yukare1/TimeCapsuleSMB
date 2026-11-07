@@ -61,6 +61,7 @@
       "vfs_aio_fork_enabled"
     ],
     "discover": [
+      "interface",
       "macos_local_network_preflight_duration_ms",
       "macos_local_network_preflight_error",
       "macos_local_network_preflight_result",

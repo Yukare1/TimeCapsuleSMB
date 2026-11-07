@@ -606,7 +606,7 @@ def _read_uncached(path: Path) -> bytes:
     plain read through the mount still returns this Mac's cached copy, while
     an F_NOCACHE read returns the device's. Bytes, so contents the device
     damaged fail the comparison instead of the decoding."""
-    fd = os.open(path, os.O_RDONLY)
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
     try:
         if sys.platform != "win32" and hasattr(fcntl, "F_NOCACHE"):  # macOS only; tests run it elsewhere too
             fcntl.fcntl(fd, fcntl.F_NOCACHE, 1)

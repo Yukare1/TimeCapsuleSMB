@@ -102,7 +102,7 @@ class Desktop:
         self._button(row, "Discover", self._discover)
         self._button(row, "+ Add Device", self._add_device)
         self.interface_addresses = [
-            (f"{adapter.nice_name} · {address.ip}", address.ip)
+            (f"{address.ip} · {adapter.nice_name}", address.ip)
             for adapter in get_adapters() for address in adapter.ips
             if address.is_IPv4 and not ipaddress.IPv4Address(address.ip).is_loopback
         ]

@@ -3872,6 +3872,9 @@ def _doctor_check_device_smb(
             "the saved password is not the AirPort admin password, so Samba would reject it (see this computer's checks)"
         ))
         return DEVICE_SMB_BLOCKED
+    if client.kind == "windows":
+        sink.add(CheckResult("SKIP", "Windows checks SMB login and files over the direct TCP 445 connection."))
+        return DEVICE_SMB_NOT_RUN
     return _add_tunneled_authenticated_smb_results(
         target.connection,
         smb_password=target.smb_password,

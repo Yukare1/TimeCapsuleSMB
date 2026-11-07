@@ -4,7 +4,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Push-Location -LiteralPath $root
 try {
-    & $Python -m PyInstaller --noconfirm --onedir --windowed --name TimeCapsuleSMB `
+    & $Python -c 'from timecapsulesmb.windows_gui import configure_tcl; configure_tcl(); from PyInstaller.__main__ import run; run()' `
+        --noconfirm --onedir --windowed --name TimeCapsuleSMB `
         --workpath dist/.pyinstaller --specpath dist `
         --collect-data timecapsulesmb --collect-submodules zeroconf windows/launch.py
     if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed.' }
